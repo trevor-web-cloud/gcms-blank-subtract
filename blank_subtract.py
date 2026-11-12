@@ -62,10 +62,18 @@ import pandas as pd
 import rainbow as rb
 
 # Windows 主控台預設字碼頁 (cp950/cp1252 等) 無法輸出部分中文字元，
-# argparse --help 與中文訊息會丟 UnicodeEncodeError；強制 UTF-8 輸出。
+# argparse --help 與中文訊息會丟 UnicodeEncodeError；強制 UTF-8 輸出，
+# 並把主控台字碼頁切為 65001 (UTF-8)，英文版 Windows 亦可正確顯示中文。
 for _stream in (sys.stdout, sys.stderr):
     try:
         _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if sys.platform.startswith("win"):
+    try:
+        import ctypes
+        ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+        ctypes.windll.kernel32.SetConsoleCP(65001)
     except Exception:
         pass
 
@@ -444,17 +452,70 @@ def _gui_smoke():
     print("GUI smoke OK (tkinter 可用)")
 
 
+GUI_STR = {
+    "zh": {
+        "title": "GCMS BLANK 背景扣除",
+        "sample": "樣品 .D：", "blank": "BLANK .D：", "out": "輸出資料夾：",
+        "browse": "選擇資料夾…", "pick_title": "選擇 .D 資料夾",
+        "out_hint": "(輸出留空 = out_<樣品名>，建於目前目錄)",
+        "alpha": "Alpha 扣除係數：", "formats": "匯出格式：",
+        "run": "開始扣除", "open_out": "開啟輸出資料夾",
+        "ready": "請選擇樣品與 BLANK 的 .D 資料夾",
+        "running": "執行中…", "done_status": "完成，輸出於 ",
+        "fail_status": "執行未完成，請看紀錄",
+        "err": "錯誤", "warn": "提醒", "done": "完成",
+        "path_missing": " 資料夾不存在：",
+        "no_datams": " 資料夾內找不到 DATA.MS，仍要繼續嗎？",
+        "alpha_nan": "Alpha 必須是數字", "no_format": "至少選一種匯出格式",
+        "done_msg": "背景扣除完成。\n輸出資料夾：",
+    },
+    "en": {
+        "title": "GCMS BLANK Background Subtraction",
+        "sample": "Sample .D:", "blank": "BLANK .D:", "out": "Output folder:",
+        "browse": "Browse...",
+        "pick_title": "Select .D folder",
+        "out_hint": "(leave empty = out_<sample name>, in current folder)",
+        "alpha": "Alpha factor:", "formats": "Formats:",
+        "run": "Run subtraction", "open_out": "Open output folder",
+        "ready": "Select the sample and BLANK .D folders",
+        "running": "Running...",
+        "done_status": "Done. Output: ",
+        "fail_status": "Failed - see log",
+        "err": "Error", "warn": "Warning", "done": "Done",
+        "path_missing": " folder not found: ",
+        "no_datams": " has no DATA.MS inside. Continue anyway?",
+        "alpha_nan": "Alpha must be a number",
+        "no_format": "Select at least one output format",
+        "done_msg": "Subtraction complete.\nOutput folder: ",
+    },
+}
+
+
+def _detect_lang():
+    """依系統語系選 GUI 語言: zh 開頭 -> 中文，其餘 (含英文版 Windows) -> 英文。"""
+    try:
+        import locale
+        loc = (locale.getlocale()[0] or "").lower()
+    except Exception:
+        loc = ""
+    return "zh" if loc.startswith(("zh", "chinese")) else "en"
+
+
 def launch_gui():
-    """圖形介面: 資料夾選擇視窗 (雙擊 exe 不帶參數、或 --gui 啟動)。"""
+    """圖形介面: 資料夾選擇視窗 (雙擊 exe 不帶參數、或 --gui 啟動)。
+    依系統語系自動中/英，可用視窗右上角按鈕即時切換，避免英文版
+    Windows 上出現亂碼或缺字。"""
     import queue
     import threading
     import tkinter as tk
     from tkinter import filedialog, messagebox, scrolledtext
 
+    lang = {"cur": _detect_lang()}
+    T = lambda: GUI_STR[lang["cur"]]  # noqa: E731
+
     root = tk.Tk()
-    root.title("GCMS BLANK 背景扣除")
-    root.geometry("660x540")
-    root.minsize(560, 460)
+    root.geometry("680x560")
+    root.minsize(580, 480)
 
     sample_var = tk.StringVar()
     blank_var = tk.StringVar()
@@ -463,44 +524,91 @@ def launch_gui():
     csv_var = tk.BooleanVar(value=True)
     cdf_var = tk.BooleanVar(value=True)
     mzml_var = tk.BooleanVar(value=True)
-    status_var = tk.StringVar(value="請選擇樣品與 BLANK 的 .D 資料夾")
+    status_var = tk.StringVar()
 
-    frm = tk.Frame(root, padx=12, pady=10)
-    frm.pack(fill="x")
+    container = tk.Frame(root)
+    container.pack(fill="both", expand=True)
+    state = {"log_text": ""}
 
-    def path_row(row, label, var):
-        tk.Label(frm, text=label, width=14, anchor="e").grid(
-            row=row, column=0, sticky="e", pady=3)
-        tk.Entry(frm, textvariable=var).grid(
-            row=row, column=1, sticky="ew", pady=3)
-        tk.Button(frm, text="選擇資料夾…", width=12,
-                  command=lambda: _browse(var)).grid(
-            row=row, column=2, padx=6, pady=3)
+    def build():
+        for w in container.winfo_children():
+            w.destroy()
+        t = T()
+        root.title(t["title"])
+        top = tk.Frame(container, padx=12, pady=6)
+        top.pack(fill="x")
+        tk.Label(top, text="Language:").pack(side="right")
+        tk.Button(top, text="English", width=8,
+                  command=lambda: switch("en")).pack(side="right", padx=2)
+        tk.Button(top, text="中文", width=8,
+                  command=lambda: switch("zh")).pack(side="right", padx=2)
 
-    def _browse(var):
-        d = filedialog.askdirectory(title="選擇 .D 資料夾", mustexist=True)
-        if d:
-            var.set(d)
+        frm = tk.Frame(container, padx=12, pady=4)
+        frm.pack(fill="x")
 
-    path_row(0, "樣品 .D：", sample_var)
-    path_row(1, "BLANK .D：", blank_var)
-    path_row(2, "輸出資料夾：", out_var)
-    frm.columnconfigure(1, weight=1)
-    tk.Label(frm, text="(輸出留空 = out_<樣品名>，建於目前目錄)",
-             fg="gray").grid(row=3, column=1, sticky="w")
+        def browse(var):
+            d = filedialog.askdirectory(title=t["pick_title"], mustexist=True)
+            if d:
+                var.set(d)
 
-    opt = tk.Frame(root, padx=12)
-    opt.pack(fill="x")
-    tk.Label(opt, text="Alpha 扣除係數：").pack(side="left")
-    tk.Entry(opt, textvariable=alpha_var, width=7).pack(side="left", padx=(0, 16))
-    tk.Label(opt, text="匯出格式：").pack(side="left")
-    tk.Checkbutton(opt, text="CSV/Excel", variable=csv_var).pack(side="left")
-    tk.Checkbutton(opt, text="CDF (ChemStation)", variable=cdf_var).pack(side="left")
-    tk.Checkbutton(opt, text="mzML", variable=mzml_var).pack(side="left")
+        def path_row(row, label, var):
+            tk.Label(frm, text=label, width=16, anchor="e").grid(
+                row=row, column=0, sticky="e", pady=3)
+            tk.Entry(frm, textvariable=var).grid(
+                row=row, column=1, sticky="ew", pady=3)
+            tk.Button(frm, text=t["browse"], width=13,
+                      command=lambda: browse(var)).grid(
+                row=row, column=2, padx=6, pady=3)
 
-    log = scrolledtext.ScrolledText(root, height=16, font=("Consolas", 9))
-    log.pack(fill="both", expand=True, padx=12, pady=8)
+        path_row(0, t["sample"], sample_var)
+        path_row(1, t["blank"], blank_var)
+        path_row(2, t["out"], out_var)
+        frm.columnconfigure(1, weight=1)
+        tk.Label(frm, text=t["out_hint"], fg="gray").grid(
+            row=3, column=1, sticky="w")
+
+        opt = tk.Frame(container, padx=12)
+        opt.pack(fill="x")
+        tk.Label(opt, text=t["alpha"]).pack(side="left")
+        tk.Entry(opt, textvariable=alpha_var, width=7).pack(
+            side="left", padx=(0, 16))
+        tk.Label(opt, text=t["formats"]).pack(side="left")
+        tk.Checkbutton(opt, text="CSV/Excel", variable=csv_var).pack(side="left")
+        tk.Checkbutton(opt, text="CDF (ChemStation)", variable=cdf_var).pack(side="left")
+        tk.Checkbutton(opt, text="mzML", variable=mzml_var).pack(side="left")
+
+        log = scrolledtext.ScrolledText(container, height=16,
+                                        font=("Consolas", 9))
+        log.pack(fill="both", expand=True, padx=12, pady=8)
+        if state["log_text"]:
+            log.insert("end", state["log_text"])
+            log.see("end")
+        state["log_widget"] = log
+
+        btns = tk.Frame(container, padx=12)
+        btns.pack(fill="x", pady=(0, 4))
+        run_btn = tk.Button(btns, text=t["run"], width=16,
+                            command=lambda: on_run(run_btn, open_btn))
+        run_btn.pack(side="left")
+        open_btn = tk.Button(btns, text=t["open_out"], width=18,
+                             command=on_open, state="disabled")
+        open_btn.pack(side="left", padx=8)
+        state["run_btn"], state["open_btn"] = run_btn, open_btn
+        if not status_var.get():
+            status_var.set(t["ready"])
+        tk.Label(container, textvariable=status_var, anchor="w",
+                 fg="gray").pack(fill="x", padx=12, pady=(0, 8))
+
+    def switch(new_lang):
+        if new_lang != lang["cur"]:
+            lang["cur"] = new_lang
+            w = state.get("log_widget")
+            if w is not None:
+                state["log_text"] = w.get("1.0", "end")
+            build()
+
     log_q = queue.Queue()
+    result = {"out": None}
 
     class _LogWriter:
         def write(self, s):
@@ -511,48 +619,49 @@ def launch_gui():
         def flush(self):
             pass
 
-    result = {"out": None}
-
     def poll():
+        t = T()
         try:
             while True:
                 kind, payload = log_q.get_nowait()
-                if kind == "log":
-                    log.insert("end", payload)
-                    log.see("end")
+                w = state.get("log_widget")
+                if kind == "log" and w is not None:
+                    w.insert("end", payload)
+                    w.see("end")
                 elif kind == "done":
                     result["out"] = payload
-                    status_var.set(f"完成，輸出於 {payload}")
-                    run_btn.config(state="normal")
-                    open_btn.config(state="normal")
-                    messagebox.showinfo("完成", f"背景扣除完成。\n輸出資料夾：{payload}")
+                    status_var.set(t["done_status"] + str(payload))
+                    state["run_btn"].config(state="normal")
+                    state["open_btn"].config(state="normal")
+                    messagebox.showinfo(t["done"], t["done_msg"] + str(payload))
                 elif kind in ("exit", "error"):
-                    status_var.set("執行未完成，請看紀錄")
-                    run_btn.config(state="normal")
-                    messagebox.showerror("執行未完成", str(payload))
+                    status_var.set(t["fail_status"])
+                    state["run_btn"].config(state="normal")
+                    messagebox.showerror(t["err"], str(payload))
         except queue.Empty:
             pass
         root.after(120, poll)
 
-    def on_run():
+    def on_run(run_btn, open_btn):
+        t = T()
         sample, blank = sample_var.get().strip(), blank_var.get().strip()
-        for label, p in (("樣品", sample), ("BLANK", blank)):
+        for label, p in ((t["sample"], sample), (t["blank"], blank)):
             if not p or not os.path.isdir(p):
-                messagebox.showerror("路徑錯誤", f"{label} 資料夾不存在：{p}")
+                messagebox.showerror(t["err"], label + t["path_missing"] + p)
                 return
             if not os.path.exists(os.path.join(p, "DATA.MS")):
                 if not messagebox.askokcancel(
-                        "提醒", f"{label} 資料夾內找不到 DATA.MS，仍要繼續嗎？\n{p}"):
+                        t["warn"], label + t["no_datams"] + "\n" + p):
                     return
         try:
             alpha = float(alpha_var.get())
         except ValueError:
-            messagebox.showerror("參數錯誤", "Alpha 必須是數字")
+            messagebox.showerror(t["err"], t["alpha_nan"])
             return
         fmts = [n for n, v in (("csv", csv_var), ("cdf", cdf_var),
                                ("mzml", mzml_var)) if v.get()]
         if not fmts:
-            messagebox.showerror("參數錯誤", "至少選一種匯出格式")
+            messagebox.showerror(t["err"], t["no_format"])
             return
         ns = argparse.Namespace(
             sample=sample, blank=blank, alpha=alpha,
@@ -560,7 +669,7 @@ def launch_gui():
             formats=",".join(fmts), gui=False, gui_smoke=False)
         run_btn.config(state="disabled")
         open_btn.config(state="disabled")
-        status_var.set("執行中…")
+        status_var.set(t["running"])
 
         def worker():
             old_out, old_err = sys.stdout, sys.stderr
@@ -585,16 +694,7 @@ def launch_gui():
                 import subprocess
                 subprocess.Popen(["xdg-open", result["out"]])
 
-    btns = tk.Frame(root, padx=12)
-    btns.pack(fill="x", pady=(0, 4))
-    run_btn = tk.Button(btns, text="開始扣除", width=14, command=on_run)
-    run_btn.pack(side="left")
-    open_btn = tk.Button(btns, text="開啟輸出資料夾", width=16,
-                         command=on_open, state="disabled")
-    open_btn.pack(side="left", padx=8)
-    tk.Label(root, textvariable=status_var, anchor="w", fg="gray").pack(
-        fill="x", padx=12, pady=(0, 8))
-
+    build()
     poll()
     root.mainloop()
 
@@ -695,7 +795,7 @@ def run_pipeline(args):
         })
     peak_df = pd.DataFrame(peak_rows)
     if not peak_df.empty:
-        peak_df.to_csv(os.path.join(out, "peak_area_comparison.csv"), index=False)
+        peak_df.to_csv(os.path.join(out, "peak_area_comparison.csv"), index=False, encoding="utf-8-sig")
 
     # ---- TIC/EIC 長表 ----
     df = pd.DataFrame({
@@ -709,7 +809,7 @@ def run_pipeline(args):
         df[f"EIC_{ion}_raw"] = eic(S, ion)
         df[f"EIC_{ion}_corr_clip"] = eic(corr_clip, ion)
     df.to_csv(os.path.join(out, "corrected_TIC_EIC.csv"),
-              index=False, float_format="%.5f")
+              index=False, float_format="%.5f", encoding="utf-8-sig")
 
     # ---- CDF / mzML 匯出 (clip 版全質譜) ----
     formats = {x.strip().lower() for x in args.formats.split(",") if x.strip()}
@@ -742,7 +842,8 @@ def run_pipeline(args):
         spec_frames.append(f[(f["abundance_raw"] > 0) | (f["abundance_corr_clip"] > 0)])
     if spec_frames:
         pd.concat(spec_frames, ignore_index=True).to_csv(
-            os.path.join(out, "apex_spectra_all.csv"), index=False)
+            os.path.join(out, "apex_spectra_all.csv"), index=False,
+            encoding="utf-8-sig")
 
     # ---- QC 摘要 ----
     qc = [
@@ -787,7 +888,7 @@ def run_pipeline(args):
         qc.append({"item": f"preflight_{c['check']}",
                    "value": f"{'PASS' if c['pass'] else 'FAIL'} ({c['detail']})"})
     qc_df = pd.DataFrame(qc)
-    qc_df.to_csv(os.path.join(out, "qc_summary.csv"), index=False)
+    qc_df.to_csv(os.path.join(out, "qc_summary.csv"), index=False, encoding="utf-8-sig")
 
     # ---- 圖 ----
     import matplotlib

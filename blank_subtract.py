@@ -458,7 +458,7 @@ GUI_STR = {
         "sample": "樣品 .D：", "blank": "BLANK .D：", "out": "輸出資料夾：",
         "browse": "選擇資料夾…", "pick_title": "選擇 .D 資料夾",
         "out_hint": "(輸出留空 = out_<樣品名>，建於目前目錄)",
-        "alpha": "Alpha 扣除係數：", "formats": "匯出格式：",
+        "alpha": "Alpha 扣除係數：", "auto": "Auto 自動估算", "formats": "匯出格式：",
         "run": "開始扣除", "open_out": "開啟輸出資料夾",
         "ready": "請選擇樣品與 BLANK 的 .D 資料夾",
         "running": "執行中…", "done_status": "完成，輸出於 ",
@@ -476,7 +476,7 @@ GUI_STR = {
         "browse": "Browse...",
         "pick_title": "Select .D folder",
         "out_hint": "(leave empty = out_<sample name>, in current folder)",
-        "alpha": "Alpha factor:", "formats": "Formats:",
+        "alpha": "Alpha factor:", "auto": "Auto estimate", "formats": "Formats:",
         "run": "Run subtraction", "open_out": "Open output folder",
         "ready": "Select the sample and BLANK .D folders",
         "running": "Running...",
@@ -523,6 +523,7 @@ def launch_gui():
     blank_var = tk.StringVar()
     out_var = tk.StringVar()
     alpha_var = tk.StringVar(value="1.0")
+    auto_var = tk.BooleanVar(value=True)
     csv_var = tk.BooleanVar(value=True)
     cdf_var = tk.BooleanVar(value=True)
     mzml_var = tk.BooleanVar(value=True)
@@ -572,8 +573,17 @@ def launch_gui():
         opt = tk.Frame(container, padx=12)
         opt.pack(fill="x")
         tk.Label(opt, text=t["alpha"]).pack(side="left")
-        tk.Entry(opt, textvariable=alpha_var, width=7).pack(
+        alpha_entry = tk.Entry(opt, textvariable=alpha_var, width=7)
+        alpha_entry.pack(side="left", padx=(0, 4))
+
+        def _sync_alpha_state():
+            alpha_entry.config(
+                state="disabled" if auto_var.get() else "normal")
+
+        tk.Checkbutton(opt, text=t["auto"], variable=auto_var,
+                       command=_sync_alpha_state).pack(
             side="left", padx=(0, 16))
+        _sync_alpha_state()
         tk.Label(opt, text=t["formats"]).pack(side="left")
         tk.Checkbutton(opt, text="CSV/Excel", variable=csv_var).pack(side="left")
         tk.Checkbutton(opt, text="CDF (ChemStation)", variable=cdf_var).pack(side="left")
@@ -664,7 +674,7 @@ def launch_gui():
             if not messagebox.askokcancel(t["warn"], t["no_blank_confirm"]):
                 return
         a_txt = alpha_var.get().strip()
-        if a_txt.lower() == "auto":
+        if auto_var.get() or a_txt.lower() == "auto":
             alpha = "auto"
         else:
             try:

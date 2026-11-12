@@ -147,7 +147,9 @@ injection volume, dilution or matrix load), a hand-picked α can distort
 peaks. With `--alpha auto` (or typing `auto` in the GUI's Alpha field)
 the tool estimates α from background-only evidence, by two independent
 routes, and discloses both in the console log, `qc_summary.csv` and the
-run README:
+run README. **In the GUI the "Auto estimate" checkbox is ticked by
+default** (the α entry is greyed out); untick it for a manual α
+(default 1.0):
 
 1. **Marker-ion least squares** — for each siloxane bleed ion
    (m/z 281, 355, 207, 147, 73) fit αᵢ = Σ Sᵢ·Bᵢ / Σ Bᵢ² over time and
@@ -173,13 +175,16 @@ Python 3.12, PyInstaller `--onefile`, see
 on the Windows runner before the artifact is published: `--help` exits 0,
 and `--gui-smoke` creates and destroys a real Tk window.
 
-Current release: **v1.4** — see the Releases page. Verified behaviour
+Current release: **v1.5** — see the Releases page. Verified behaviour
 highlights: exact signed-matrix mass balance; exported CDF and mzML
 re-read point-for-point identical to the corrected matrix (3,621 scans,
 825,546 points on the reference data set).
 
 ## Version history
 
+- **v1.5** — GUI: "Auto estimate" checkbox for α, **ticked by default**
+  (α entry greyed out while ticked); untick for manual α (default 1.0).
+  Typing `auto` in the α field still works. CLI unchanged.
 - **v1.4** — No-blank mode: `--blank` is now optional (GUI asks for
   confirmation); without a blank the tool exports the raw sample in all
   formats (`*_raw.CDF` / `*_raw.mzML`) with QC disclosure. Added the

@@ -467,6 +467,7 @@ GUI_STR = {
         "path_missing": " 資料夾不存在：",
         "no_datams": " 資料夾內找不到 DATA.MS，仍要繼續嗎？",
         "alpha_nan": "Alpha 必須是數字，或填 auto 自動估算", "no_format": "至少選一種匯出格式",
+        "no_blank_confirm": "未選擇 BLANK，將不執行背景扣除、直接匯出原始數據，繼續嗎？",
         "done_msg": "背景扣除完成。\n輸出資料夾：",
     },
     "en": {
@@ -485,6 +486,7 @@ GUI_STR = {
         "path_missing": " folder not found: ",
         "no_datams": " has no DATA.MS inside. Continue anyway?",
         "alpha_nan": "Alpha must be a number, or 'auto'",
+        "no_blank_confirm": "No BLANK selected. Raw data will be exported WITHOUT background subtraction. Continue?",
         "no_format": "Select at least one output format",
         "done_msg": "Subtraction complete.\nOutput folder: ",
     },
@@ -646,13 +648,21 @@ def launch_gui():
         t = T()
         sample, blank = sample_var.get().strip(), blank_var.get().strip()
         for label, p in ((t["sample"], sample), (t["blank"], blank)):
-            if not p or not os.path.isdir(p):
+            if not p:
+                if label == t["blank"]:
+                    continue  # BLANK 可省略 (無 BLANK 模式)
+                messagebox.showerror(t["err"], label + t["path_missing"] + p)
+                return
+            if not os.path.isdir(p):
                 messagebox.showerror(t["err"], label + t["path_missing"] + p)
                 return
             if not os.path.exists(os.path.join(p, "DATA.MS")):
                 if not messagebox.askokcancel(
                         t["warn"], label + t["no_datams"] + "\n" + p):
                     return
+        if not blank:
+            if not messagebox.askokcancel(t["warn"], t["no_blank_confirm"]):
+                return
         a_txt = alpha_var.get().strip()
         if a_txt.lower() == "auto":
             alpha = "auto"
@@ -668,7 +678,7 @@ def launch_gui():
             messagebox.showerror(t["err"], t["no_format"])
             return
         ns = argparse.Namespace(
-            sample=sample, blank=blank, alpha=alpha,
+            sample=sample, blank=blank or None, alpha=alpha,
             out=out_var.get().strip() or None, ions=None, force=False,
             formats=",".join(fmts), gui=False, gui_smoke=False)
         run_btn.config(state="disabled")
@@ -706,7 +716,7 @@ def launch_gui():
 def main():
     ap = argparse.ArgumentParser(description="GC-MS BLANK 全質譜背景扣除")
     ap.add_argument("--sample", help="樣品 .D 資料夾路徑")
-    ap.add_argument("--blank", help="BLANK .D 資料夾路徑")
+    ap.add_argument("--blank", help="BLANK .D 資料夾路徑 (可省略: 省略時不執行扣除, 直接匯出樣品原始全質譜)")
     ap.add_argument("--gui", action="store_true",
                     help="開啟圖形介面 (資料夾選擇視窗)；不帶任何參數時亦同")
     ap.add_argument("--gui-smoke", action="store_true",
@@ -738,8 +748,9 @@ def main():
     if args.gui or (not args.sample and not args.blank):
         launch_gui()
         return
-    if not args.sample or not args.blank:
-        ap.error("--sample 與 --blank 皆為必填 (或不帶參數開啟圖形介面)")
+    if not args.sample:
+        ap.error("--sample 為必填 (或不帶參數開啟圖形介面); "
+                 "--blank 可省略, 省略時不扣除直接匯出原始數據")
     run_pipeline(args)
 
 
@@ -801,28 +812,42 @@ def estimate_alpha(S, B, mz):
 
 
 def run_pipeline(args):
-    for p in (args.sample, args.blank):
-        if not os.path.isdir(p):
-            sys.exit(f"找不到資料夾: {p}")
+    if not args.sample or not os.path.isdir(args.sample):
+        sys.exit(f"找不到資料夾: {args.sample}")
+    has_blank = bool(args.blank)
+    if has_blank and not os.path.isdir(args.blank):
+        sys.exit(f"找不到資料夾: {args.blank}")
 
     s_meta = parse_metadata(args.sample)
-    b_meta = parse_metadata(args.blank)
     rt, mz, S = load_ms(args.sample)
-    rt_b, mz_b, B = load_ms(args.blank)
-
-    checks = preflight(s_meta, b_meta, rt, mz, rt_b, mz_b, force=args.force)
-    for c in checks:
-        print(f"[{'PASS' if c['pass'] else 'FAIL'}] {c['check']}: {c['detail']}")
-    hard_fails = [c for c in checks if not c["pass"] and c["hard_fail"]]
-    if hard_fails:
-        sys.exit("前置檢查未通過 (硬性): " +
-                 ", ".join(c["check"] for c in hard_fails) +
-                 "。 RT/scan/m/z 不一致需先對齊，本工具不自動處理。")
+    if has_blank:
+        b_meta = parse_metadata(args.blank)
+        rt_b, mz_b, B = load_ms(args.blank)
+        checks = preflight(s_meta, b_meta, rt, mz, rt_b, mz_b,
+                           force=args.force)
+        for c in checks:
+            print(f"[{'PASS' if c['pass'] else 'FAIL'}] "
+                  f"{c['check']}: {c['detail']}")
+        hard_fails = [c for c in checks
+                      if not c["pass"] and c["hard_fail"]]
+        if hard_fails:
+            sys.exit("前置檢查未通過 (硬性): " +
+                     ", ".join(c["check"] for c in hard_fails) +
+                     "。 RT/scan/m/z 不一致需先對齊，本工具不自動處理。")
+    else:
+        # 無 BLANK 模式: 不扣除, 直接匯出原始全質譜 (B = 0, alpha = 0)
+        b_meta = {"sample_name": "(none)", "folder": "(none)"}
+        B = np.zeros_like(S)
+        checks = []
+        print("[no-blank] 未匯入 BLANK: 跳過前置檢查與背景扣除, "
+              "直接匯出樣品原始全質譜。")
 
     # ---- alpha 決定 (手動值或自動估算) ----
     args.alpha_mode = "manual"
     args.alpha_est = None
-    if isinstance(args.alpha, str) and args.alpha.strip().lower() == "auto":
+    if not has_blank:
+        args.alpha, args.alpha_mode = 0.0, "no_blank"
+    elif isinstance(args.alpha, str) and args.alpha.strip().lower() == "auto":
         est = estimate_alpha(S, B, mz)
         args.alpha_est, args.alpha_mode = est, "auto"
         mk = f"{est['marker']:.3f} ({est['marker_detail']})" \
@@ -839,6 +864,7 @@ def run_pipeline(args):
             print(f"[alpha auto] 採用 alpha = {args.alpha:.3f}")
 
     sample_name = s_meta["sample_name"]
+    exp_tag = "corr" if has_blank else "raw"
     out = args.out or f"out_{sample_name}"
     os.makedirs(out, exist_ok=True)
 
@@ -903,12 +929,12 @@ def run_pipeline(args):
     formats = {x.strip().lower() for x in args.formats.split(",") if x.strip()}
     export_info = {}
     if "cdf" in formats:
-        cdf_path = os.path.join(out, f"{sample_name}_corr.CDF")
+        cdf_path = os.path.join(out, f"{sample_name}_{exp_tag}.CDF")
         n_pts = write_andi_cdf(cdf_path, rt, mz, corr_clip, sample_name)
         export_info["cdf"] = (cdf_path, n_pts)
         print(f"  CDF (ANDI-MS) 已寫出: {cdf_path} ({n_pts} points)")
     if "mzml" in formats:
-        mzml_path = os.path.join(out, f"{sample_name}_corr.mzML")
+        mzml_path = os.path.join(out, f"{sample_name}_{exp_tag}.mzML")
         write_mzml(mzml_path, rt, mz, corr_clip, sample_name, tic_clip)
         export_info["mzml"] = (mzml_path, len(rt))
         print(f"  mzML 已寫出: {mzml_path} ({len(rt)} spectra)")
@@ -974,7 +1000,8 @@ def run_pipeline(args):
              "value": e["marker_detail"] or "n/a"},
         ]
     else:
-        qc[3:3] = [{"item": "alpha_mode", "value": "manual"}]
+        qc[3:3] = [{"item": "alpha_mode",
+                    "value": getattr(args, "alpha_mode", "manual")}]
     for lo, hi in DEFAULT_REGIONS:
         m = (rt >= lo) & (rt < hi)
         if m.any() and tic_raw[m].sum():
@@ -982,7 +1009,7 @@ def run_pipeline(args):
                        "value": 100 * float(args.alpha * tic_blk[m].sum())
                                 / float(tic_raw[m].sum())})
     tot_blk = B.sum(axis=0)
-    for i in np.argsort(tot_blk)[::-1][:10]:
+    for i in (np.argsort(tot_blk)[::-1][:10] if tot_blk.sum() > 0 else []):
         qc.append({"item": f"blank_top_ion_mz_{int(round(mz[i]))}_share_pct",
                    "value": 100 * float(tot_blk[i]) / float(tot_blk.sum())})
     for c in checks:
@@ -1050,6 +1077,8 @@ def run_pipeline(args):
         alpha_line += (f" (自動估算: 標記離子路 {f3(e['marker'])} / "
                        f"背景區路 {f3(e['region'])} / "
                        f"標記明細 {e['marker_detail'] or 'n/a'})")
+    if not has_blank:
+        alpha_line += " (未匯入 BLANK, 未執行扣除; 匯出為原始全質譜)"
     readme = f"""# BLANK 背景扣除執行紀錄
 
 - 樣品: {sample_name} ({s_meta['folder']})
@@ -1069,8 +1098,8 @@ def run_pipeline(args):
 2. 目標峰區間若 blank 貢獻 <1%，扣除主要作用在質譜淨化與未知峰判讀，
    不應期待定量數字大幅變動。
 3. 本工具不產生新的 .D/DATA.MS。回原軟體分析請用同目錄的
-   {sample_name}_corr.CDF (ChemStation: File > Import File > Load AIA
-   File；載入後需重新指定處理方法) 或 {sample_name}_corr.mzML
+   {sample_name}_{exp_tag}.CDF (ChemStation: File > Import File > Load AIA
+   File；載入後需重新指定處理方法) 或 {sample_name}_{exp_tag}.mzML
    (OpenChrom/MZmine)；兩者皆為 clip 版全質譜。
 """
     with open(os.path.join(out, "README_run.md"), "w", encoding="utf-8") as f:

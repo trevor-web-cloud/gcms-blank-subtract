@@ -36,6 +36,31 @@ corrected_signed = sample − α × blank
 corrected_clip   = max(corrected_signed, 0)
 ```
 
+**Definition of α (alpha).** α is the ratio between the background
+contribution actually present in the *sample* injection and the
+background measured in the *blank* injection:
+
+```
+α = (background present in the sample run) ÷ (background in the blank run)
+```
+
+- α = 1.0 — the sample contains exactly as much background as the blank
+  run measured (the normal case for back-to-back runs in one sequence
+  with the same injection volume and method).
+- α > 1 — the sample run carries more background than the blank showed
+  (e.g. larger injection volume); subtract proportionally more.
+- α < 1 — the sample run carries less (e.g. smaller injection volume or
+  dilution); subtract proportionally less.
+- α = 0 — no subtraction at all.
+
+α scales an *amount of background*, nothing else: it must be calibrated
+on background-only evidence (see *Automatic α estimation* below), never
+on total signal, which is dominated by the analytes. Different
+background sources also scale differently — column bleed follows the
+temperature program (α ≈ 1 regardless of sample amount), solvent
+impurities follow the injected volume, and carryover from a previous
+sample is not present in the blank at all, so no α can correct it.
+
 - **Preflight checks** — scan count, m/z grid, RT-axis deviation, Gain
   Factor, method file and instrument serial are compared before any math;
   hard mismatches abort with a clear message instead of silently producing
@@ -103,7 +128,7 @@ GCMS_BlankSubtract.exe --sample "D:\data\SAMPLE.D" --blank "D:\data\BLANK.D"
 | Parameter | Required | Default | Description |
 |---|---|---|---|
 | `--sample` | yes* | — | Sample `.D` folder |
-| `--blank` | yes* | — | BLANK `.D` folder |
+| `--blank` | no | — | BLANK `.D` folder. **May be omitted**: with no blank the tool skips preflight and subtraction and exports the sample's raw full spectra instead (files named `<sample>_raw.CDF` / `_raw.mzML`; QC records `alpha_mode = no_blank`) |
 | `--alpha` | no | `1.0` | Blank scaling factor (e.g. `1.2` subtracts 20 % more), or `auto` — estimate α from the data (see below) |
 | `--out` | no | `out_<sample name>` | Output folder |
 | `--ions` | no | auto | EIC target ions, comma-separated; auto = ions from `RESULTS.CSV`, else `57,91,104,105,118,135` |
@@ -148,13 +173,17 @@ Python 3.12, PyInstaller `--onefile`, see
 on the Windows runner before the artifact is published: `--help` exits 0,
 and `--gui-smoke` creates and destroys a real Tk window.
 
-Current release: **v1.3** — see the Releases page. Verified behaviour
+Current release: **v1.4** — see the Releases page. Verified behaviour
 highlights: exact signed-matrix mass balance; exported CDF and mzML
 re-read point-for-point identical to the corrected matrix (3,621 scans,
 825,546 points on the reference data set).
 
 ## Version history
 
+- **v1.4** — No-blank mode: `--blank` is now optional (GUI asks for
+  confirmation); without a blank the tool exports the raw sample in all
+  formats (`*_raw.CDF` / `*_raw.mzML`) with QC disclosure. Added the
+  formal definition of α to this README.
 - **v1.3** — Automatic α estimation (`--alpha auto` / GUI Alpha field):
   marker-ion least squares + background-region median, both disclosed
   in QC; manual α unchanged (regression-verified identical output).

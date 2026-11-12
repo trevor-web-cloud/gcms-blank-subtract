@@ -61,6 +61,21 @@ The tool never writes a new `.D` / `DATA.MS`: the format is proprietary
 and has no reliable open writer, so corrected data are delivered in the
 open formats above.
 
+### Opening the exported files
+
+| Format | Software that opens it | Cost / download |
+|---|---|---|
+| CSV / Excel (`.csv`, `.xlsx`) | Microsoft Excel; **LibreOffice Calc**; any text editor (CSV only) | Excel: commercial (Microsoft 365). LibreOffice: free — [download](https://www.libreoffice.org/download/download-libreoffice/) |
+| AIA / CDF (`.CDF`) | **Agilent MSD ChemStation** (Data Analysis → *File → Import File → Load AIA File*); **OpenChrom**; **AMDIS** (NIST) | ChemStation: commercial, licensed from Agilent (no public download). OpenChrom: free — [openchrom.net](https://www.openchrom.net). AMDIS: free — [NIST CHEMDATA](https://chemdata.nist.gov/dokuwiki/doku.php?id=chemdata:amdis) |
+| mzML (`.mzML`) | **OpenChrom**; **MZmine**; **SeeMS** viewer (part of ProteoWizard) | All free — OpenChrom: [openchrom.net](https://www.openchrom.net); MZmine: [mzmine.github.io](https://mzmine.github.io/); ProteoWizard / SeeMS: [download page](https://proteowizard.sourceforge.io/download.html) |
+
+Notes: OpenChrom (free, Windows / macOS / Linux) opens **both** the CDF
+and the mzML — and even the original Agilent `.D` folders — so it is the
+single most convenient viewer for the corrected data. AMDIS additionally
+performs spectral deconvolution and NIST library searching on the CDF.
+For returning to the original ChemStation workflow (integration, method
+quantitation), the CDF in ChemStation remains the primary route.
+
 ## Usage
 
 ### Windows executable (GUI)

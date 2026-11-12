@@ -1,5 +1,7 @@
 # GCMS BlankSubtract
 
+> 中文說明 (Chinese version, kept in sync): [README.zh-TW.md](README.zh-TW.md)
+
 Full-spectrum background subtraction for legacy Agilent / HP GC-MS data:
 subtracts a complete BLANK run, scan by scan and ion by ion, from a sample
 run — something MSD ChemStation itself cannot do (its built-in BSB only

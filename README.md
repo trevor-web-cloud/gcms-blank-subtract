@@ -101,6 +101,37 @@ performs spectral deconvolution and NIST library searching on the CDF.
 For returning to the original ChemStation workflow (integration, method
 quantitation), the CDF in ChemStation remains the primary route.
 
+### Re-assigning the processing method in MSD ChemStation (E.02)
+
+An AIA/CDF file carries no processing method, so after loading it you
+must re-attach the `.M` used at acquisition — this restores the
+integration events and the quantitation database (compound retention
+times, target/qualifier ions, calibration curve):
+
+1. Open **Data Analysis** (offline is fine).
+2. **File → Import File → Load AIA File…** and select
+   `<sample>_corr.CDF`.
+3. **Method → Load Method…** and select the **same method used for the
+   acquisition** (on the instrument PC, typically under
+   `C:\msdchem\1\methods\`).
+4. Verify before quantitating: a known peak's retention time must match
+   the original `.D`, and an extracted apex spectrum should show the
+   reduced background ions. The CDF preserves the original RT axis, so
+   the method's RT windows should hit directly.
+5. **Quant → Calculate…**, choose the report style and destination —
+   quantitation uses the method's existing calibration; **no
+   recalibration is needed**.
+6. Touch up integration with **Quant → QEdit Results…** if needed, and
+   save the report alongside the CDF.
+
+Notes: load the method but do not modify it — changing integration
+events destroys comparability with the original results. If *Calculate*
+is greyed out, load the method before the AIA file, or re-load the
+method after it. Acceptance check: run the same Calculate on the
+original `.D` with the same method — clean peaks should agree closely.
+The report header's sample-information fields come from the AIA file
+and may show defaults; this is cosmetic and does not affect the numbers.
+
 ## Usage
 
 ### Windows executable (GUI)
@@ -175,13 +206,16 @@ Python 3.12, PyInstaller `--onefile`, see
 on the Windows runner before the artifact is published: `--help` exits 0,
 and `--gui-smoke` creates and destroys a real Tk window.
 
-Current release: **v1.5** — see the Releases page. Verified behaviour
+Current release: **v1.6** — see the Releases page. Verified behaviour
 highlights: exact signed-matrix mass balance; exported CDF and mzML
 re-read point-for-point identical to the corrected matrix (3,621 scans,
 825,546 points on the reference data set).
 
 ## Version history
 
+- **v1.6** — Documentation: ChemStation method re-assignment procedure
+  (Load AIA File → Load Method → Calculate) added to this README and to
+  the per-run `README_run.md` generated with every output.
 - **v1.5** — GUI: "Auto estimate" checkbox for α, **ticked by default**
   (α entry greyed out while ticked); untick for manual α (default 1.0).
   Typing `auto` in the α field still works. CLI unchanged.

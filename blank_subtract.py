@@ -1111,6 +1111,23 @@ def run_pipeline(args):
    {sample_name}_{exp_tag}.CDF (ChemStation: File > Import File > Load AIA
    File；載入後需重新指定處理方法) 或 {sample_name}_{exp_tag}.mzML
    (OpenChrom/MZmine)；兩者皆為 clip 版全質譜。
+
+## CDF 回 ChemStation 重新指定處理方法 (MSD ChemStation E.02)
+AIA/CDF 不帶處理方法，載入後須把擷取時用的 .M 掛回去，積分參數與
+定量資料庫 (化合物 RT、目標/確認離子、校正曲線) 即恢復：
+1. 開 Data Analysis (離線模式)。
+2. File > Import File > Load AIA File，選本目錄的
+   {sample_name}_{exp_tag}.CDF。
+3. Method > Load Method，選擷取時同一支方法 (本案見上方「方法」欄；
+   儀器電腦通常在 C:\\msdchem\\1\\methods\\)。
+4. 定量前先驗證：已知峰 RT 應與原始 .D 一致，取峰頂質譜確認背景
+   離子已降低 (CDF 保留原始 RT 軸，方法 RT 窗口應直接命中)。
+5. Quant > Calculate，選報告格式與輸出即完成定量；不需重新校正。
+6. 修積分用 Quant > QEdit Results；報告請存檔並與 CDF 併存。
+注意：只載入、勿修改方法 (改積分事件即失去與原始結果之可比性)；
+Calculate 若為灰色，先 Load Method 再 Load AIA File，或載入 CDF
+後再重掛一次方法；驗收比對：同一方法對原始 .D 也跑一次 Calculate，
+乾淨峰結果應非常接近。
 """
     with open(os.path.join(out, "README_run.md"), "w", encoding="utf-8") as f:
         f.write(readme)

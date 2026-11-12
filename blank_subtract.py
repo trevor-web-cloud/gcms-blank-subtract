@@ -61,6 +61,14 @@ import numpy as np
 import pandas as pd
 import rainbow as rb
 
+# Windows 主控台預設字碼頁 (cp950/cp1252 等) 無法輸出部分中文字元，
+# argparse --help 與中文訊息會丟 UnicodeEncodeError；強制 UTF-8 輸出。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 RT_DEV_LIMIT_MIN = 0.01          # RT 軸允許最大偏差 (min)，超過視為需對齊、本工具停機
 DEFAULT_REGIONS = [(2.287, 3.0), (3.0, 5.0), (5.0, 6.0), (6.0, 7.0),
                    (7.0, 10.0), (10.0, 14.0), (14.0, 18.0)]

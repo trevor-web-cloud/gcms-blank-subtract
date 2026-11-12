@@ -1,0 +1,31 @@
+name: Build Windows EXE
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+      - name: Build onefile EXE
+        run: >
+          pyinstaller --onefile --console
+          --name GCMS_BlankSubtract
+          --hidden-import scipy.io.netcdf_file
+          --hidden-import rainbow
+          blank_subtract.py
+      - name: Smoke test (--help must exit 0)
+        run: .\dist\GCMS_BlankSubtract.exe --help
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GCMS_BlankSubtract-win64
+          path: dist/GCMS_BlankSubtract.exe

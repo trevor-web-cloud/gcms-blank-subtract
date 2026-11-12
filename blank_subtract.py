@@ -434,10 +434,179 @@ def trapz_window(rt, y, i0, i1):
     return float(np.trapezoid(y[i0:i1 + 1], rt[i0:i1 + 1]))
 
 
+def _gui_smoke():
+    """CI 煙霧測試: 建立並立即銷毀 Tk 根視窗，驗證打包後 tkinter 可用。"""
+    import tkinter as tk
+    root = tk.Tk()
+    root.withdraw()
+    root.update()
+    root.destroy()
+    print("GUI smoke OK (tkinter 可用)")
+
+
+def launch_gui():
+    """圖形介面: 資料夾選擇視窗 (雙擊 exe 不帶參數、或 --gui 啟動)。"""
+    import queue
+    import threading
+    import tkinter as tk
+    from tkinter import filedialog, messagebox, scrolledtext
+
+    root = tk.Tk()
+    root.title("GCMS BLANK 背景扣除")
+    root.geometry("660x540")
+    root.minsize(560, 460)
+
+    sample_var = tk.StringVar()
+    blank_var = tk.StringVar()
+    out_var = tk.StringVar()
+    alpha_var = tk.StringVar(value="1.0")
+    csv_var = tk.BooleanVar(value=True)
+    cdf_var = tk.BooleanVar(value=True)
+    mzml_var = tk.BooleanVar(value=True)
+    status_var = tk.StringVar(value="請選擇樣品與 BLANK 的 .D 資料夾")
+
+    frm = tk.Frame(root, padx=12, pady=10)
+    frm.pack(fill="x")
+
+    def path_row(row, label, var):
+        tk.Label(frm, text=label, width=14, anchor="e").grid(
+            row=row, column=0, sticky="e", pady=3)
+        tk.Entry(frm, textvariable=var).grid(
+            row=row, column=1, sticky="ew", pady=3)
+        tk.Button(frm, text="選擇資料夾…", width=12,
+                  command=lambda: _browse(var)).grid(
+            row=row, column=2, padx=6, pady=3)
+
+    def _browse(var):
+        d = filedialog.askdirectory(title="選擇 .D 資料夾", mustexist=True)
+        if d:
+            var.set(d)
+
+    path_row(0, "樣品 .D：", sample_var)
+    path_row(1, "BLANK .D：", blank_var)
+    path_row(2, "輸出資料夾：", out_var)
+    frm.columnconfigure(1, weight=1)
+    tk.Label(frm, text="(輸出留空 = out_<樣品名>，建於目前目錄)",
+             fg="gray").grid(row=3, column=1, sticky="w")
+
+    opt = tk.Frame(root, padx=12)
+    opt.pack(fill="x")
+    tk.Label(opt, text="Alpha 扣除係數：").pack(side="left")
+    tk.Entry(opt, textvariable=alpha_var, width=7).pack(side="left", padx=(0, 16))
+    tk.Label(opt, text="匯出格式：").pack(side="left")
+    tk.Checkbutton(opt, text="CSV/Excel", variable=csv_var).pack(side="left")
+    tk.Checkbutton(opt, text="CDF (ChemStation)", variable=cdf_var).pack(side="left")
+    tk.Checkbutton(opt, text="mzML", variable=mzml_var).pack(side="left")
+
+    log = scrolledtext.ScrolledText(root, height=16, font=("Consolas", 9))
+    log.pack(fill="both", expand=True, padx=12, pady=8)
+    log_q = queue.Queue()
+
+    class _LogWriter:
+        def write(self, s):
+            if s:
+                log_q.put(("log", s))
+            return len(s)
+
+        def flush(self):
+            pass
+
+    result = {"out": None}
+
+    def poll():
+        try:
+            while True:
+                kind, payload = log_q.get_nowait()
+                if kind == "log":
+                    log.insert("end", payload)
+                    log.see("end")
+                elif kind == "done":
+                    result["out"] = payload
+                    status_var.set(f"完成，輸出於 {payload}")
+                    run_btn.config(state="normal")
+                    open_btn.config(state="normal")
+                    messagebox.showinfo("完成", f"背景扣除完成。\n輸出資料夾：{payload}")
+                elif kind in ("exit", "error"):
+                    status_var.set("執行未完成，請看紀錄")
+                    run_btn.config(state="normal")
+                    messagebox.showerror("執行未完成", str(payload))
+        except queue.Empty:
+            pass
+        root.after(120, poll)
+
+    def on_run():
+        sample, blank = sample_var.get().strip(), blank_var.get().strip()
+        for label, p in (("樣品", sample), ("BLANK", blank)):
+            if not p or not os.path.isdir(p):
+                messagebox.showerror("路徑錯誤", f"{label} 資料夾不存在：{p}")
+                return
+            if not os.path.exists(os.path.join(p, "DATA.MS")):
+                if not messagebox.askokcancel(
+                        "提醒", f"{label} 資料夾內找不到 DATA.MS，仍要繼續嗎？\n{p}"):
+                    return
+        try:
+            alpha = float(alpha_var.get())
+        except ValueError:
+            messagebox.showerror("參數錯誤", "Alpha 必須是數字")
+            return
+        fmts = [n for n, v in (("csv", csv_var), ("cdf", cdf_var),
+                               ("mzml", mzml_var)) if v.get()]
+        if not fmts:
+            messagebox.showerror("參數錯誤", "至少選一種匯出格式")
+            return
+        ns = argparse.Namespace(
+            sample=sample, blank=blank, alpha=alpha,
+            out=out_var.get().strip() or None, ions=None, force=False,
+            formats=",".join(fmts), gui=False, gui_smoke=False)
+        run_btn.config(state="disabled")
+        open_btn.config(state="disabled")
+        status_var.set("執行中…")
+
+        def worker():
+            old_out, old_err = sys.stdout, sys.stderr
+            sys.stdout = sys.stderr = _LogWriter()
+            try:
+                out_path = run_pipeline(ns)
+                log_q.put(("done", out_path))
+            except SystemExit as e:
+                log_q.put(("exit", str(e)))
+            except Exception as e:  # noqa: BLE001 - GUI 需攔截並顯示
+                log_q.put(("error", f"{type(e).__name__}: {e}"))
+            finally:
+                sys.stdout, sys.stderr = old_out, old_err
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_open():
+        if result["out"] and os.path.isdir(result["out"]):
+            try:
+                os.startfile(result["out"])  # Windows
+            except AttributeError:
+                import subprocess
+                subprocess.Popen(["xdg-open", result["out"]])
+
+    btns = tk.Frame(root, padx=12)
+    btns.pack(fill="x", pady=(0, 4))
+    run_btn = tk.Button(btns, text="開始扣除", width=14, command=on_run)
+    run_btn.pack(side="left")
+    open_btn = tk.Button(btns, text="開啟輸出資料夾", width=16,
+                         command=on_open, state="disabled")
+    open_btn.pack(side="left", padx=8)
+    tk.Label(root, textvariable=status_var, anchor="w", fg="gray").pack(
+        fill="x", padx=12, pady=(0, 8))
+
+    poll()
+    root.mainloop()
+
+
 def main():
     ap = argparse.ArgumentParser(description="GC-MS BLANK 全質譜背景扣除")
-    ap.add_argument("--sample", required=True, help="樣品 .D 資料夾路徑")
-    ap.add_argument("--blank", required=True, help="BLANK .D 資料夾路徑")
+    ap.add_argument("--sample", help="樣品 .D 資料夾路徑")
+    ap.add_argument("--blank", help="BLANK .D 資料夾路徑")
+    ap.add_argument("--gui", action="store_true",
+                    help="開啟圖形介面 (資料夾選擇視窗)；不帶任何參數時亦同")
+    ap.add_argument("--gui-smoke", action="store_true",
+                    help=argparse.SUPPRESS)
     ap.add_argument("--alpha", type=float, default=1.0,
                     help="BLANK 扣除係數 (預設 1.0)")
     ap.add_argument("--out", default=None, help="輸出資料夾 (預設 out_<sample>)")
@@ -451,6 +620,18 @@ def main():
                          "csv 含圖與 Excel)")
     args = ap.parse_args()
 
+    if args.gui_smoke:
+        _gui_smoke()
+        return
+    if args.gui or (not args.sample and not args.blank):
+        launch_gui()
+        return
+    if not args.sample or not args.blank:
+        ap.error("--sample 與 --blank 皆為必填 (或不帶參數開啟圖形介面)")
+    run_pipeline(args)
+
+
+def run_pipeline(args):
     for p in (args.sample, args.blank):
         if not os.path.isdir(p):
             sys.exit(f"找不到資料夾: {p}")
@@ -697,6 +878,7 @@ def main():
             print(f"    ion {int(r['ion'])} peak {int(r['peak_no'])} "
                   f"RT {r['rt_min']:.3f}: {r['change_clip_pct']:+.2f}% "
                   f"(signed {r['change_signed_pct']:+.2f}%)")
+    return out
 
 
 if __name__ == "__main__":

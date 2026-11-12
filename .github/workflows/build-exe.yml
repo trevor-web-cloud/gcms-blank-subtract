@@ -24,6 +24,8 @@ jobs:
           blank_subtract.py
       - name: Smoke test (--help must exit 0)
         run: .\dist\GCMS_BlankSubtract.exe --help
+      - name: GUI smoke test (tkinter window create/destroy)
+        run: .\dist\GCMS_BlankSubtract.exe --gui-smoke
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:

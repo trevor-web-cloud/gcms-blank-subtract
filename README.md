@@ -104,7 +104,7 @@ GCMS_BlankSubtract.exe --sample "D:\data\SAMPLE.D" --blank "D:\data\BLANK.D"
 |---|---|---|---|
 | `--sample` | yes* | — | Sample `.D` folder |
 | `--blank` | yes* | — | BLANK `.D` folder |
-| `--alpha` | no | `1.0` | Blank scaling factor (e.g. `1.2` subtracts 20 % more) |
+| `--alpha` | no | `1.0` | Blank scaling factor (e.g. `1.2` subtracts 20 % more), or `auto` — estimate α from the data (see below) |
 | `--out` | no | `out_<sample name>` | Output folder |
 | `--ions` | no | auto | EIC target ions, comma-separated; auto = ions from `RESULTS.CSV`, else `57,91,104,105,118,135` |
 | `--formats` | no | `csv,cdf,mzml` | Output formats, comma-separated |
@@ -115,6 +115,31 @@ Python: `python blank_subtract.py --sample ... --blank ...` with
 dependencies `rainbow-api, numpy, pandas, scipy, matplotlib, openpyxl`
 (see `requirements.txt`).
 
+### Automatic α estimation (`--alpha auto`)
+
+When the blank and the sample differ in overall intensity (different
+injection volume, dilution or matrix load), a hand-picked α can distort
+peaks. With `--alpha auto` (or typing `auto` in the GUI's Alpha field)
+the tool estimates α from background-only evidence, by two independent
+routes, and discloses both in the console log, `qc_summary.csv` and the
+run README:
+
+1. **Marker-ion least squares** — for each siloxane bleed ion
+   (m/z 281, 355, 207, 147, 73) fit αᵢ = Σ Sᵢ·Bᵢ / Σ Bᵢ² over time and
+   take the median (robust against a marker that also appears in an
+   analyte).
+2. **Background-region median** — per scan, α_t = (S_t·B_t)/(B_t·B_t),
+   restricted to blank-dominated scans, again taking the median.
+
+If both routes agree within 30 % their mean is used; the marker route
+wins on disagreement; if neither route has data the tool falls back to
+α = 1.0 and says so. The estimate is clamped to [0.05, 5.0]. On the
+reference data set (a same-sequence matched pair) the two routes gave
+0.990 and 0.957, so α = 0.973 was adopted — close to the ideal 1.0, as
+expected. α compensates *amount* differences only; it cannot repair
+retention-time shifts or peak-shape differences — re-run a matched
+blank for those.
+
 ## Build
 
 `GCMS_BlankSubtract.exe` is built on GitHub Actions (`windows-latest`,
@@ -123,13 +148,16 @@ Python 3.12, PyInstaller `--onefile`, see
 on the Windows runner before the artifact is published: `--help` exits 0,
 and `--gui-smoke` creates and destroys a real Tk window.
 
-Current release: **v1.2** — see the Releases page. Verified behaviour
+Current release: **v1.3** — see the Releases page. Verified behaviour
 highlights: exact signed-matrix mass balance; exported CDF and mzML
 re-read point-for-point identical to the corrected matrix (3,621 scans,
 825,546 points on the reference data set).
 
 ## Version history
 
+- **v1.3** — Automatic α estimation (`--alpha auto` / GUI Alpha field):
+  marker-ion least squares + background-region median, both disclosed
+  in QC; manual α unchanged (regression-verified identical output).
 - **v1.2** — English-Windows safety: console code page forced to UTF-8,
   GUI auto Chinese/English by system locale with in-window switch,
   CSV outputs as UTF-8 with BOM.

@@ -466,7 +466,7 @@ GUI_STR = {
         "err": "錯誤", "warn": "提醒", "done": "完成",
         "path_missing": " 資料夾不存在：",
         "no_datams": " 資料夾內找不到 DATA.MS，仍要繼續嗎？",
-        "alpha_nan": "Alpha 必須是數字", "no_format": "至少選一種匯出格式",
+        "alpha_nan": "Alpha 必須是數字，或填 auto 自動估算", "no_format": "至少選一種匯出格式",
         "done_msg": "背景扣除完成。\n輸出資料夾：",
     },
     "en": {
@@ -484,7 +484,7 @@ GUI_STR = {
         "err": "Error", "warn": "Warning", "done": "Done",
         "path_missing": " folder not found: ",
         "no_datams": " has no DATA.MS inside. Continue anyway?",
-        "alpha_nan": "Alpha must be a number",
+        "alpha_nan": "Alpha must be a number, or 'auto'",
         "no_format": "Select at least one output format",
         "done_msg": "Subtraction complete.\nOutput folder: ",
     },
@@ -653,11 +653,15 @@ def launch_gui():
                 if not messagebox.askokcancel(
                         t["warn"], label + t["no_datams"] + "\n" + p):
                     return
-        try:
-            alpha = float(alpha_var.get())
-        except ValueError:
-            messagebox.showerror(t["err"], t["alpha_nan"])
-            return
+        a_txt = alpha_var.get().strip()
+        if a_txt.lower() == "auto":
+            alpha = "auto"
+        else:
+            try:
+                alpha = float(a_txt)
+            except ValueError:
+                messagebox.showerror(t["err"], t["alpha_nan"])
+                return
         fmts = [n for n, v in (("csv", csv_var), ("cdf", cdf_var),
                                ("mzml", mzml_var)) if v.get()]
         if not fmts:
@@ -707,8 +711,9 @@ def main():
                     help="開啟圖形介面 (資料夾選擇視窗)；不帶任何參數時亦同")
     ap.add_argument("--gui-smoke", action="store_true",
                     help=argparse.SUPPRESS)
-    ap.add_argument("--alpha", type=float, default=1.0,
-                    help="BLANK 扣除係數 (預設 1.0)")
+    ap.add_argument("--alpha", default="1.0",
+                    help="BLANK 扣除係數 (預設 1.0; 填 auto 由標記離子+"
+                         "背景區自動估算)")
     ap.add_argument("--out", default=None, help="輸出資料夾 (預設 out_<sample>)")
     ap.add_argument("--ions", default=None,
                     help="EIC 目標離子，逗號分隔 (預設取 RESULTS.CSV 離子，"
@@ -719,6 +724,13 @@ def main():
                     help="匯出格式，逗號分隔 (預設 csv,cdf,mzml 全開；"
                          "csv 含圖與 Excel)")
     args = ap.parse_args()
+    if isinstance(args.alpha, str) and args.alpha.strip().lower() == "auto":
+        args.alpha = "auto"
+    else:
+        try:
+            args.alpha = float(args.alpha)
+        except (TypeError, ValueError):
+            ap.error("--alpha 必須是數字或 auto")
 
     if args.gui_smoke:
         _gui_smoke()
@@ -729,6 +741,63 @@ def main():
     if not args.sample or not args.blank:
         ap.error("--sample 與 --blank 皆為必填 (或不帶參數開啟圖形介面)")
     run_pipeline(args)
+
+
+
+# 背景標記離子: 矽氧烷管柱流失/系統背景 (分析物通常不用)
+MARKER_IONS = (281, 355, 207, 147, 73)
+
+
+def estimate_alpha(S, B, mz):
+    """自動估算 alpha: 兩路獨立估計, 揭露依據, 不黑箱。
+
+    (1) 標記離子路: 每個標記離子逐時最小平方
+        alpha_i = sum(S_i * B_i) / sum(B_i^2);
+        閘門: BLANK 該離子總量 >= BLANK TIC 的 0.05%; 取通過者中位數。
+    (2) 背景區路: 逐 scan alpha_t = (S_t . B_t) / (B_t . B_t),
+        僅取 BLANK 主導 (該 scan BLANK TIC >= 樣品 TIC 50%) 且
+        BLANK TIC >= 全程 BLANK TIC 中位數的 scan, 取中位數
+        (逐 scan 中位數對分析物共流出穩健)。
+    建議值: 兩路皆有且相對差 <= 30% 取平均; 僅一路取該路; 皆無 None。
+    夾限 [0.05, 5.0]。回傳 dict(marker, region, suggested, marker_detail,
+    region_scans)。"""
+    tic_s, tic_b = S.sum(axis=1), B.sum(axis=1)
+    mz_index = {int(round(m)): i for i, m in enumerate(mz)}
+    per_ion = {}
+    for ion in MARKER_IONS:
+        j = mz_index.get(ion)
+        if j is None:
+            continue
+        b_col, s_col = B[:, j], S[:, j]
+        if float(b_col.sum()) < 0.0005 * float(tic_b.sum()):
+            continue
+        den = float(b_col @ b_col)
+        if den <= 0:
+            continue
+        per_ion[ion] = float(s_col @ b_col) / den
+    marker = (float(np.median(list(per_ion.values()))) if per_ion else None)
+    detail = ", ".join(f"m/z {k}={v:.3f}" for k, v in per_ion.items())
+
+    num = np.einsum("ij,ij->i", S, B)
+    den = np.einsum("ij,ij->i", B, B)
+    pos = tic_b[tic_b > 0]
+    med_b = float(np.median(pos)) if len(pos) else 0.0
+    gate = (den > 0) & (tic_b >= 0.5 * tic_s) & (tic_b >= med_b)
+    region = (float(np.median(num[gate] / den[gate]))
+              if int(gate.sum()) >= 10 else None)
+    n_scans = int(gate.sum())
+
+    if marker is not None and region is not None:
+        rel = abs(marker - region) / max(marker, region)
+        suggested = (marker + region) / 2 if rel <= 0.30 else marker
+    elif marker is not None:
+        suggested = marker
+    else:
+        suggested = region
+    if suggested is not None:
+        suggested = float(min(max(suggested, 0.05), 5.0))
+    return {"marker": marker, "region": region, "suggested": suggested,
+            "marker_detail": detail, "region_scans": n_scans}
 
 
 def run_pipeline(args):
@@ -749,6 +818,25 @@ def run_pipeline(args):
         sys.exit("前置檢查未通過 (硬性): " +
                  ", ".join(c["check"] for c in hard_fails) +
                  "。 RT/scan/m/z 不一致需先對齊，本工具不自動處理。")
+
+    # ---- alpha 決定 (手動值或自動估算) ----
+    args.alpha_mode = "manual"
+    args.alpha_est = None
+    if isinstance(args.alpha, str) and args.alpha.strip().lower() == "auto":
+        est = estimate_alpha(S, B, mz)
+        args.alpha_est, args.alpha_mode = est, "auto"
+        mk = f"{est['marker']:.3f} ({est['marker_detail']})" \
+            if est["marker"] is not None else "無可用標記"
+        rg = f"{est['region']:.3f} ({est['region_scans']} scans)" \
+            if est["region"] is not None else "無可用區段"
+        print(f"[alpha auto] 標記離子路: {mk}")
+        print(f"[alpha auto] 背景區路: {rg}")
+        if est["suggested"] is None:
+            print("[alpha auto] 兩路皆無估計, 退回 alpha = 1.0")
+            args.alpha = 1.0
+        else:
+            args.alpha = est["suggested"]
+            print(f"[alpha auto] 採用 alpha = {args.alpha:.3f}")
 
     sample_name = s_meta["sample_name"]
     out = args.out or f"out_{sample_name}"
@@ -874,6 +962,19 @@ def run_pipeline(args):
          "value": float(tic_sign.sum()) -
                   (float(tic_raw.sum()) - args.alpha * float(tic_blk.sum()))},
     ]
+    if getattr(args, "alpha_mode", "manual") == "auto" and args.alpha_est:
+        e = args.alpha_est
+        qc[3:3] = [
+            {"item": "alpha_mode", "value": "auto"},
+            {"item": "alpha_est_marker_ls",
+             "value": e["marker"] if e["marker"] is not None else "n/a"},
+            {"item": "alpha_est_region_median",
+             "value": e["region"] if e["region"] is not None else "n/a"},
+            {"item": "alpha_est_marker_detail",
+             "value": e["marker_detail"] or "n/a"},
+        ]
+    else:
+        qc[3:3] = [{"item": "alpha_mode", "value": "manual"}]
     for lo, hi in DEFAULT_REGIONS:
         m = (rt >= lo) & (rt < hi)
         if m.any() and tic_raw[m].sum():
@@ -942,12 +1043,19 @@ def run_pipeline(args):
         df.head(5000).to_excel(xw, sheet_name="TIC_EIC_head5000", index=False)
 
     # ---- README ----
+    alpha_line = f"- alpha = {args.alpha}"
+    if getattr(args, "alpha_mode", "manual") == "auto" and args.alpha_est:
+        e = args.alpha_est
+        f3 = lambda v: f"{v:.3f}" if v is not None else "n/a"  # noqa: E731
+        alpha_line += (f" (自動估算: 標記離子路 {f3(e['marker'])} / "
+                       f"背景區路 {f3(e['region'])} / "
+                       f"標記明細 {e['marker_detail'] or 'n/a'})")
     readme = f"""# BLANK 背景扣除執行紀錄
 
 - 樣品: {sample_name} ({s_meta['folder']})
 - BLANK: {b_meta['sample_name']} ({b_meta['folder']})
 - 方法: {s_meta['method_file']} / Gain Factor {s_meta['gain_factor']} (兩份一致性見 qc_summary)
-- alpha = {args.alpha}
+{alpha_line}
 - 扣除定義: corrected_signed = sample - alpha*blank; corrected_clip = max(signed, 0)
 - scans = {len(rt)}, RT {rt.min():.3f}-{rt.max():.3f} min, m/z grid {len(mz)} 點
 - BLANK 總 TIC 占樣品 {100*float(args.alpha*tic_blk.sum())/float(tic_raw.sum()):.1f}%；
